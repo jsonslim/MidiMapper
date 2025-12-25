@@ -1,0 +1,52 @@
+.grid-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  /* max-width: 800px; */
+  margin: 12px;
+  /* border: 2px solid gray; */
+}
+
+.show {
+  display: block;
+}
+
+.conta {
+  display: grid;
+  grid-template-columns: 1.3fr 0.7fr 0.7fr 1.3fr;
+  grid-template-rows: 1fr 1fr 1fr;
+  gap: 8px 8px;
+  grid-auto-flow: row;
+  grid-template-areas:
+    "on send send ch"
+    "cmd-num cmd-num cmd-val cmd-val"
+    "Color-ON Color-ON Color-Off Color-Off";
+}
+
+.Color-ON {
+  grid-area: Color-ON;
+}
+
+.Color-Off {
+  grid-area: Color-Off;
+}
+
+.cmd-num {
+  grid-area: cmd-num;
+}
+
+.cmd-val {
+  grid-area: cmd-val;
+}
+
+.on {
+  grid-area: on;
+}
+
+.send {
+  grid-area: send;
+}
+
+.ch {
+  grid-area: ch;
+}

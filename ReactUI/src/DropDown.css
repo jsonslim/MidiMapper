@@ -1,0 +1,17 @@
+.dropdown-container {
+    text-align: left;
+    color: #686868;
+    width: 170px;
+    height: 66px;
+    max-width: 260px;
+    border: 1px solid #a0a0a0;
+    border-radius: 8px;
+    padding: 4px;
+    box-sizing: border-box;
+}
+
+.dropdown-label {
+    margin-left: 10px;
+    display: block;
+    justify-self: left;
+}
