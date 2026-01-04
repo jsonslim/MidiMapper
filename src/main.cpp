@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include "DisplayDrv_st7789.h"
 #include "globals.h"
 
@@ -58,30 +59,360 @@ struct MidiData
 
 MidiData currentMidi = {MSG_CC, 12, 123, 16, 40};
 
+// Demo mode control
+bool demoEnabled = false; // Set to false to disable demo and use serial commands only
+
 // LED indicator variables
 unsigned long ledOnTime = 0;
 const int LED_DURATION = 150; // LED stays on for 150ms
 bool ledState = false;
-const int LED_X = 16;      // LED position X (near right edge)
-const int LED_Y = 16;        // LED position Y (near top)
-const int LED_RADIUS = 5;   // LED circle radius
+const int LED_X = 16;     // LED position X (near right edge)
+const int LED_Y = 16;     // LED position Y (near top)
+const int LED_RADIUS = 5; // LED circle radius
+
+// JSON Mapping structure
+JsonDocument mapDoc;
+bool mappingEnabled = true;
+
+// Default mapping JSON (example with type conversion)
+const char *defaultMapping = R"({
+  "cc_map": {
+    "12": 16,
+    "23": "note:45",
+    "74": [71, 72, "note:60"],
+    "1": {"type": "note", "num": 64, "scale": 1.0},
+    "7": {"num": 77, "scale": 0.8}
+  },
+  "pc_map": {
+    "0": 10,
+    "5": ["cc:74", "note:60"],
+    "10": {"type": "cc", "num": 100}
+  },
+  "note_map": {
+    "60": 64,
+    "62": ["cc:74", "note:67"],
+    "72": {"type": "cc", "num": 76, "velocity": 1.2}
+  }
+})";
+
+// Output structure for multiple mappings
+struct MappedOutput
+{
+  MidiMessageType type; // Output message type (can be different from input)
+  uint8_t number;
+  uint8_t value;
+};
+
+// Function to apply value scaling/transformation
+uint8_t scaleValue(uint8_t inputValue, float scale)
+{
+  int scaled = (int)(inputValue * scale);
+  if (scaled > 127)
+    scaled = 127;
+  if (scaled < 0)
+    scaled = 0;
+  return (uint8_t)scaled;
+}
+
+// Function to get mapping key based on message type
+String getMappingKey(MidiMessageType type)
+{
+  switch (type)
+  {
+  case MSG_CC:
+    return "cc_map";
+  case MSG_PC:
+    return "pc_map";
+  case MSG_NOTE:
+    return "note_map";
+  default:
+    return "";
+  }
+}
+
+// Function to apply mapping
+// Returns true if mapping was applied, false if pass-through
+bool applyMapping(MidiData &midi, MappedOutput outputs[], int &outputCount)
+{
+  outputCount = 0;
+
+  if (!mappingEnabled)
+  {
+    // Pass-through mode
+    outputs[0].type = midi.type;
+    outputs[0].number = midi.inNumber;
+    outputs[0].value = midi.inValue;
+    outputCount = 1;
+    return false;
+  }
+
+  String mapKey = getMappingKey(midi.type);
+  String inKey = String(midi.inNumber);
+
+  if (!mapDoc.containsKey(mapKey))
+  {
+    // No mapping for this type, pass through
+    outputs[0].type = midi.type;
+    outputs[0].number = midi.inNumber;
+    outputs[0].value = midi.inValue;
+    outputCount = 1;
+    return false;
+  }
+
+  JsonObject map = mapDoc[mapKey];
+
+  if (!map.containsKey(inKey))
+  {
+    // No mapping for this specific number, pass through
+    outputs[0].type = midi.type;
+    outputs[0].number = midi.inNumber;
+    outputs[0].value = midi.inValue;
+    outputCount = 1;
+    return false;
+  }
+
+  JsonVariant mapping = map[inKey];
+
+  // Handle different mapping types
+  if (mapping.is<int>())
+  {
+    // Simple number mapping: "12": 16 (same type)
+    outputs[0].type = midi.type;
+    outputs[0].number = mapping.as<int>();
+    outputs[0].value = midi.inValue;
+    outputCount = 1;
+  }
+  else if (mapping.is<String>())
+  {
+    // String mapping for type conversion: "23": "note:45"
+    String mapStr = mapping.as<String>();
+    int colonPos = mapStr.indexOf(':');
+
+    if (colonPos > 0)
+    {
+      String typeStr = mapStr.substring(0, colonPos);
+      int targetNum = mapStr.substring(colonPos + 1).toInt();
+
+      // Determine output type
+      typeStr.toLowerCase();
+      if (typeStr == "cc")
+      {
+        outputs[0].type = MSG_CC;
+      }
+      else if (typeStr == "pc")
+      {
+        outputs[0].type = MSG_PC;
+      }
+      else if (typeStr == "note" || typeStr == "nn")
+      {
+        outputs[0].type = MSG_NOTE;
+      }
+      else
+      {
+        outputs[0].type = midi.type; // Unknown, keep same type
+      }
+
+      outputs[0].number = targetNum;
+      outputs[0].value = midi.inValue;
+      outputCount = 1;
+    }
+    else
+    {
+      // No colon, treat as number
+      outputs[0].type = midi.type;
+      outputs[0].number = mapStr.toInt();
+      outputs[0].value = midi.inValue;
+      outputCount = 1;
+    }
+  }
+  else if (mapping.is<JsonArray>())
+  {
+    // Array mapping (one-to-many): "12": [16, 17, "note:60"]
+    JsonArray arr = mapping.as<JsonArray>();
+    outputCount = 0;
+    for (JsonVariant v : arr)
+    {
+      if (outputCount >= 10)
+        break; // Max 10 outputs
+
+      if (v.is<int>())
+      {
+        // Simple number (same type)
+        outputs[outputCount].type = midi.type;
+        outputs[outputCount].number = v.as<int>();
+        outputs[outputCount].value = midi.inValue;
+        outputCount++;
+      }
+      else if (v.is<String>())
+      {
+        // String with type conversion
+        String mapStr = v.as<String>();
+        int colonPos = mapStr.indexOf(':');
+
+        if (colonPos > 0)
+        {
+          String typeStr = mapStr.substring(0, colonPos);
+          int targetNum = mapStr.substring(colonPos + 1).toInt();
+
+          typeStr.toLowerCase();
+          if (typeStr == "cc")
+          {
+            outputs[outputCount].type = MSG_CC;
+          }
+          else if (typeStr == "pc")
+          {
+            outputs[outputCount].type = MSG_PC;
+          }
+          else if (typeStr == "note" || typeStr == "nn")
+          {
+            outputs[outputCount].type = MSG_NOTE;
+          }
+          else
+          {
+            outputs[outputCount].type = midi.type;
+          }
+
+          outputs[outputCount].number = targetNum;
+          outputs[outputCount].value = midi.inValue;
+          outputCount++;
+        }
+      }
+    }
+  }
+  else if (mapping.is<JsonObject>())
+  {
+    // Object mapping with transformations: "12": {"type": "note", "num": 60, "scale": 0.5}
+    JsonObject obj = mapping.as<JsonObject>();
+
+    // Check for type conversion
+    if (obj.containsKey("type"))
+    {
+      String typeStr = obj["type"].as<String>();
+      typeStr.toLowerCase();
+      if (typeStr == "cc")
+      {
+        outputs[0].type = MSG_CC;
+      }
+      else if (typeStr == "pc")
+      {
+        outputs[0].type = MSG_PC;
+      }
+      else if (typeStr == "note" || typeStr == "nn")
+      {
+        outputs[0].type = MSG_NOTE;
+      }
+      else
+      {
+        outputs[0].type = midi.type;
+      }
+    }
+    else
+    {
+      outputs[0].type = midi.type; // Keep same type if not specified
+    }
+
+    outputs[0].number = obj["num"] | midi.inNumber; // Default to input if not specified
+
+    if (obj.containsKey("scale"))
+    {
+      float scale = obj["scale"];
+      outputs[0].value = scaleValue(midi.inValue, scale);
+    }
+    else if (obj.containsKey("velocity"))
+    {
+      float scale = obj["velocity"];
+      outputs[0].value = scaleValue(midi.inValue, scale);
+    }
+    else
+    {
+      outputs[0].value = midi.inValue;
+    }
+    outputCount = 1;
+  }
+
+  return true;
+}
+
+// Function to load JSON mapping
+void loadMapping(const char *jsonString)
+{
+  DeserializationError error = deserializeJson(mapDoc, jsonString);
+
+  if (error)
+  {
+    Serial.print("JSON parsing failed: ");
+    Serial.println(error.c_str());
+    mappingEnabled = false;
+    return;
+  }
+
+  Serial.println("✓ Mapping loaded successfully");
+  mappingEnabled = true;
+
+  // Print loaded mappings
+  Serial.println("\n=== Current Mappings ===");
+  if (mapDoc.containsKey("cc_map"))
+  {
+    Serial.println("CC Mappings:");
+    JsonObject ccMap = mapDoc["cc_map"];
+    for (JsonPair kv : ccMap)
+    {
+      Serial.print("  CC");
+      Serial.print(kv.key().c_str());
+      Serial.print(" -> ");
+      serializeJson(kv.value(), Serial);
+      Serial.println();
+    }
+  }
+  if (mapDoc.containsKey("pc_map"))
+  {
+    Serial.println("PC Mappings:");
+    JsonObject pcMap = mapDoc["pc_map"];
+    for (JsonPair kv : pcMap)
+    {
+      Serial.print("  PC");
+      Serial.print(kv.key().c_str());
+      Serial.print(" -> ");
+      serializeJson(kv.value(), Serial);
+      Serial.println();
+    }
+  }
+  if (mapDoc.containsKey("note_map"))
+  {
+    Serial.println("Note Mappings:");
+    JsonObject noteMap = mapDoc["note_map"];
+    for (JsonPair kv : noteMap)
+    {
+      Serial.print("  Note ");
+      Serial.print(kv.key().c_str());
+      Serial.print(" -> ");
+      serializeJson(kv.value(), Serial);
+      Serial.println();
+    }
+  }
+  Serial.println("=======================\n");
+}
 
 // Function to turn LED on (green circle)
-void ledOn() {
+void ledOn()
+{
   tft.fillCircle(LED_X, LED_Y, LED_RADIUS, TFT_GREEN);
   ledState = true;
   ledOnTime = millis();
 }
 
 // Function to turn LED off (dark circle)
-void ledOff() {
+void ledOff()
+{
   tft.fillCircle(LED_X, LED_Y, LED_RADIUS, TFT_DARKGREY);
   ledState = false;
 }
 
 // Function to update LED state (call in loop)
-void updateLED() {
-  if (ledState && (millis() - ledOnTime >= LED_DURATION)) {
+void updateLED()
+{
+  if (ledState && (millis() - ledOnTime >= LED_DURATION))
+  {
     ledOff();
   }
 }
@@ -121,7 +452,7 @@ void updateDisplay()
 
   // Display IN MIDI command
   tft.setTextSize(4);
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);  // Set text color with black background
+  tft.setTextColor(TFT_CYAN, TFT_BLACK); // Set text color with black background
   tft.setCursor(20, 56);
   tft.print(getMidiName(currentMidi.type, currentMidi.inNumber));
 
@@ -130,7 +461,7 @@ void updateDisplay()
   tft.print(getMidiName(currentMidi.type, currentMidi.outNumber));
 
   // Display values (only for CC and Notes, not for PC)
-  tft.setTextColor(TFT_YELLOW, TFT_BLACK);  // Set text color with black background
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK); // Set text color with black background
   if (currentMidi.type != MSG_PC)
   {
     tft.setCursor(20, 105);
@@ -140,7 +471,7 @@ void updateDisplay()
   }
 
   tft.drawFastVLine(159, 2, 168, TFT_DARKGREY);
-  
+
   // Trigger LED blink on every update
   ledOn();
 }
@@ -189,26 +520,316 @@ void setup()
 
   // Draw border with rounded corners
   tft.drawRoundRect(0, 0, 320, 172, 23, TFT_MAGENTA);
-  
+
   // Initialize LED indicator in off state
   ledOff();
 
   // Initial display update
   updateDisplay();
 
+  // Load default mapping
+  loadMapping(defaultMapping);
+
   Serial.println("Display initialized with MIDI data!");
+  Serial.println("\n=== MIDI Mapper Ready ===");
+  Serial.println("Type 'help' for commands");
+  Serial.println("Demo mode: " + String(demoEnabled ? "ENABLED" : "DISABLED"));
+  Serial.println("========================\n");
+}
+
+// Serial command parser
+// Format: cc_<number>_<value> or pc_<number> or nn_<number>_<velocity>
+// Examples: cc_12_64, pc_5, nn_60_100
+void parseSerialCommand()
+{
+  if (Serial.available() > 0)
+  {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    cmd.toLowerCase();
+
+    if (cmd.length() == 0)
+      return;
+
+    Serial.print("Received command: ");
+    Serial.println(cmd);
+
+    // Parse command type
+    if (cmd.startsWith("cc_"))
+    {
+      // Control Change: cc_<number>_<value>
+      int firstUnderscore = cmd.indexOf('_');
+      int secondUnderscore = cmd.indexOf('_', firstUnderscore + 1);
+
+      if (secondUnderscore > 0)
+      {
+        String numStr = cmd.substring(firstUnderscore + 1, secondUnderscore);
+        String valStr = cmd.substring(secondUnderscore + 1);
+
+        int ccNum = numStr.toInt();
+        int ccVal = valStr.toInt();
+
+        if (ccNum >= 0 && ccNum <= 127 && ccVal >= 0 && ccVal <= 127)
+        {
+          currentMidi.type = MSG_CC;
+          currentMidi.inNumber = ccNum;
+          currentMidi.inValue = ccVal;
+
+          // Apply mapping
+          MappedOutput outputs[10];
+          int outputCount = 0;
+          applyMapping(currentMidi, outputs, outputCount);
+
+          // Display first output (for multi-output, show the first one)
+          if (outputCount > 0)
+          {
+            currentMidi.type = outputs[0].type; // Update type in case it changed
+            currentMidi.outNumber = outputs[0].number;
+            currentMidi.outValue = outputs[0].value;
+          }
+          else
+          {
+            currentMidi.outNumber = ccNum;
+            currentMidi.outValue = ccVal;
+          }
+
+          updateDisplay();
+          Serial.printf("✓ CC%d Value:%d -> ", ccNum, ccVal);
+
+          // Print all outputs with their types
+          for (int i = 0; i < outputCount; i++)
+          {
+            switch (outputs[i].type)
+            {
+            case MSG_CC:
+              Serial.printf("CC%d:%d", outputs[i].number, outputs[i].value);
+              break;
+            case MSG_PC:
+              Serial.printf("PC%d", outputs[i].number);
+              break;
+            case MSG_NOTE:
+              Serial.printf("Note %s:%d", NOTE_NAMES[outputs[i].number], outputs[i].value);
+              break;
+            }
+            if (i < outputCount - 1)
+              Serial.print(", ");
+          }
+          Serial.println();
+        }
+        else
+        {
+          Serial.println("✗ Error: CC number and value must be 0-127");
+        }
+      }
+      else
+      {
+        Serial.println("✗ Error: Format should be cc_<number>_<value>");
+      }
+    }
+    else if (cmd.startsWith("pc_"))
+    {
+      // Program Change: pc_<number>
+      int firstUnderscore = cmd.indexOf('_');
+      String numStr = cmd.substring(firstUnderscore + 1);
+
+      int pcNum = numStr.toInt();
+
+      if (pcNum >= 0 && pcNum <= 127)
+      {
+        currentMidi.type = MSG_PC;
+        currentMidi.inNumber = pcNum;
+        currentMidi.inValue = 0;
+
+        // Apply mapping
+        MappedOutput outputs[10];
+        int outputCount = 0;
+        applyMapping(currentMidi, outputs, outputCount);
+
+        // Display first output
+        if (outputCount > 0)
+        {
+          currentMidi.type = outputs[0].type; // Update type in case it changed
+          currentMidi.outNumber = outputs[0].number;
+          currentMidi.outValue = outputs[0].value;
+        }
+        else
+        {
+          currentMidi.outNumber = pcNum;
+        }
+
+        updateDisplay();
+        Serial.printf("✓ PC%d -> ", pcNum);
+
+        // Print all outputs with their types
+        for (int i = 0; i < outputCount; i++)
+        {
+          switch (outputs[i].type)
+          {
+          case MSG_CC:
+            Serial.printf("CC%d:%d", outputs[i].number, outputs[i].value);
+            break;
+          case MSG_PC:
+            Serial.printf("PC%d", outputs[i].number);
+            break;
+          case MSG_NOTE:
+            Serial.printf("Note %s:%d", NOTE_NAMES[outputs[i].number], outputs[i].value);
+            break;
+          }
+          if (i < outputCount - 1)
+            Serial.print(", ");
+        }
+        Serial.println();
+      }
+      else
+      {
+        Serial.println("✗ Error: PC number must be 0-127");
+      }
+    }
+    else if (cmd.startsWith("nn_"))
+    {
+      // Note: nn_<number>_<velocity>
+      int firstUnderscore = cmd.indexOf('_');
+      int secondUnderscore = cmd.indexOf('_', firstUnderscore + 1);
+
+      if (secondUnderscore > 0)
+      {
+        String numStr = cmd.substring(firstUnderscore + 1, secondUnderscore);
+        String velStr = cmd.substring(secondUnderscore + 1);
+
+        int noteNum = numStr.toInt();
+        int noteVel = velStr.toInt();
+
+        if (noteNum >= 0 && noteNum <= 127 && noteVel >= 0 && noteVel <= 127)
+        {
+          currentMidi.type = MSG_NOTE;
+          currentMidi.inNumber = noteNum;
+          currentMidi.inValue = noteVel;
+
+          // Apply mapping
+          MappedOutput outputs[10];
+          int outputCount = 0;
+          applyMapping(currentMidi, outputs, outputCount);
+
+          // Display first output
+          if (outputCount > 0)
+          {
+            currentMidi.type = outputs[0].type; // Update type in case it changed
+            currentMidi.outNumber = outputs[0].number;
+            currentMidi.outValue = outputs[0].value;
+          }
+          else
+          {
+            currentMidi.outNumber = noteNum;
+            currentMidi.outValue = noteVel;
+          }
+
+          updateDisplay();
+          Serial.printf("✓ Note %s Vel:%d -> ", NOTE_NAMES[noteNum], noteVel);
+
+          // Print all outputs with their types
+          for (int i = 0; i < outputCount; i++)
+          {
+            switch (outputs[i].type)
+            {
+            case MSG_CC:
+              Serial.printf("CC%d:%d", outputs[i].number, outputs[i].value);
+              break;
+            case MSG_PC:
+              Serial.printf("PC%d", outputs[i].number);
+              break;
+            case MSG_NOTE:
+              Serial.printf("%s:%d", NOTE_NAMES[outputs[i].number], outputs[i].value);
+              break;
+            }
+            if (i < outputCount - 1)
+              Serial.print(", ");
+          }
+          Serial.println();
+        }
+        else
+        {
+          Serial.println("✗ Error: Note number and velocity must be 0-127");
+        }
+      }
+      else
+      {
+        Serial.println("✗ Error: Format should be nn_<number>_<velocity>");
+      }
+    }
+    else if (cmd == "help" || cmd == "?")
+    {
+      Serial.println("\n=== MIDI Mapper Commands ===");
+      Serial.println("cc_<num>_<val>  - Control Change (e.g., cc_12_64)");
+      Serial.println("pc_<num>        - Program Change (e.g., pc_5)");
+      Serial.println("nn_<num>_<vel>  - Note (e.g., nn_60_100)");
+      Serial.println("map             - Toggle mapping on/off");
+      Serial.println("showmap         - Show current mappings");
+      Serial.println("loadmap         - Load default mapping");
+      Serial.println("demo            - Toggle demo mode");
+      Serial.println("help or ?       - Show this help");
+      Serial.println("===========================\n");
+    }
+    else if (cmd == "map")
+    {
+      mappingEnabled = !mappingEnabled;
+      if (mappingEnabled)
+      {
+        Serial.println("✓ Mapping ENABLED - messages will be mapped");
+      }
+      else
+      {
+        Serial.println("✓ Mapping DISABLED - pass-through mode");
+      }
+    }
+    else if (cmd == "showmap")
+    {
+      if (mapDoc.isNull() || mapDoc.size() == 0)
+      {
+        Serial.println("✗ No mapping loaded. Use 'loadmap' to load default mapping.");
+      }
+      else
+      {
+        Serial.println("\n=== Current Mapping JSON ===");
+        serializeJsonPretty(mapDoc, Serial);
+        Serial.println("\n===========================\n");
+      }
+    }
+    else if (cmd == "loadmap")
+    {
+      loadMapping(defaultMapping);
+    }
+    else if (cmd == "demo")
+    {
+      demoEnabled = !demoEnabled;
+      if (demoEnabled)
+      {
+        Serial.println("✓ Demo mode ENABLED - auto-cycling through MIDI messages");
+      }
+      else
+      {
+        Serial.println("✓ Demo mode DISABLED - use serial commands");
+      }
+    }
+    else
+    {
+      Serial.println("✗ Unknown command. Type 'help' for command list");
+    }
+  }
 }
 
 void loop()
 {
+  // Check for serial commands
+  parseSerialCommand();
+
   // Update LED state (turn off after duration)
   updateLED();
-  
-  // Demo: Cycle through different MIDI message types every 3 seconds
+
+  // Demo: Cycle through different MIDI message types every 1 second (if enabled)
   static unsigned long lastUpdate = 0;
   static uint8_t demoMode = 0;
 
-  if (millis() - lastUpdate > 1000)
+  if (demoEnabled && millis() - lastUpdate > 1000)
   {
     lastUpdate = millis();
 
@@ -265,4 +886,7 @@ void loop()
     // Cycle to next demo mode
     demoMode = (demoMode + 1) % 5;
   }
+
+  // Parse any serial commands
+  parseSerialCommand();
 }
