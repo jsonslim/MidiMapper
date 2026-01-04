@@ -34,41 +34,41 @@ void setup()
 
   // Add some colorful text
   tft.setTextSize(2);
-  tft.setTextColor(TFT_GREEN);
-  tft.setCursor(70, 10);
+  tft.setTextColor(TFT_DARKGREEN);
+  tft.setCursor(20, 10);
   tft.println("IN");
 
   tft.setTextSize(2);
-  tft.setTextColor(TFT_GREEN);
-  tft.setCursor(230, 10);
+  tft.setTextColor(TFT_DARKGREEN);
+  tft.setCursor(190, 10);
   tft.println("OUT");
+
+  // tft.drawTriangle(150, 8, 150, 28, 160, 18, TFT_DARKGREY); // on top
+  // tft.drawFastHLine(3, 34, 314, TFT_DARKGREY);
 
   tft.setTextSize(4);
   tft.setTextColor(TFT_CYAN);
-  tft.setCursor(30, 80);
+  tft.setCursor(20, 56);
   tft.println("CC12");
 
-  tft.setCursor(190, 80);
+  tft.setCursor(190, 56);
   tft.println("CC16");
 
   tft.setTextColor(TFT_YELLOW);
-  tft.setCursor(40, 210);
-  tft.println("LovyanGFX");
+  tft.setCursor(20, 105);
+  tft.println("123");
+  tft.setCursor(190, 105);
+  tft.println("40");
 
   // Draw some shapes with rounded corners
   // Draw a border with rounded corners (inset from edges to see the rounding)
   tft.drawRoundRect(0, 0, 320, 172, 23, TFT_MAGENTA);
-  tft.drawFastVLine(160, 10, 150, TFT_DARKGREY);
+  // tft.drawFastVLine(160, 40, 110, TFT_DARKGREY);
 
-  // Test: Draw a filled rounded rectangle to verify it works
-  // tft.fillRoundRect(250, 130, 60, 30, 8, TFT_DARKGREEN);
-  // tft.setTextSize(1);
-  // tft.setTextColor(TFT_WHITE);
-  // tft.setCursor(260, 140);
-  // tft.print("TEST");
+  // tft.drawTriangle(148, 60, 148, 140, 170, 100, TFT_DARKGREY); // on the middle
 
-  // tft.drawCircle(160, 260, 30, TFT_RED);
-  // tft.fillCircle(160, 260, 25, TFT_BLUE);
+  // tft.drawLine(160, 40, 170, 90, TFT_DARKGREY);
+  // tft.drawLine(160, 150, 170, 90, TFT_DARKGREY);
 
   Serial.println("Hello World displayed!");
 }

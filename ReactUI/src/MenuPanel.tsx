@@ -5,7 +5,7 @@
 */
 
 import './MenuPanel.css';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import DropDown from './DropDown';
 import im from './assets/recycleBin.svg';  
 
