@@ -206,6 +206,55 @@ updateDisplay();
 5. **Maintainable:** All MIDI names in one place
 6. **Visual feedback:** Real-time display updates
 
+## 💡 MIDI Activity LED Indicator
+
+### Visual Feedback
+A green LED circle in the top-right corner of the display flashes every time a MIDI message is processed.
+
+### LED Specifications
+- **Position:** (305, 8) - Top-right corner
+- **Radius:** 5 pixels
+- **Colors:**
+  - **Active (ON):** Green - indicates MIDI message received/processed
+  - **Idle (OFF):** Dark Grey - normal state
+- **Duration:** 150ms flash per message
+- **Behavior:** Auto-turns off after 150ms
+
+### Technical Implementation
+
+#### Functions
+```cpp
+ledOn()       // Turn LED green (triggered on MIDI update)
+ledOff()      // Turn LED dark grey (idle state)
+updateLED()   // Check timing and auto-turn off (called in loop)
+```
+
+#### Timing
+- LED turns ON when `updateDisplay()` is called
+- LED automatically turns OFF after 150ms
+- Non-blocking implementation using `millis()`
+- Can handle rapid MIDI messages without blocking
+
+### Visual Layout
+```
+┌──────────────────────────────●┐  ← LED indicator
+│ IN              OUT          │
+├──────────────────────────────┤
+│                              │
+│ CC12            CC16         │
+│ 45              89           │
+└──────────────────────────────┘
+```
+
+### Integration
+The LED automatically blinks when:
+- Demo mode cycles through scenarios (every 1 second)
+- Real MIDI messages are received and processed
+- Display is updated with new MIDI data
+
+**Status:** ✅ Implemented with auto-off timing
+**Visual Impact:** Provides instant feedback for MIDI activity
+
 ---
 
 **Status:** ✅ Implemented and tested in demo mode

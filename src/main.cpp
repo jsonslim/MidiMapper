@@ -58,6 +58,34 @@ struct MidiData
 
 MidiData currentMidi = {MSG_CC, 12, 123, 16, 40};
 
+// LED indicator variables
+unsigned long ledOnTime = 0;
+const int LED_DURATION = 150; // LED stays on for 150ms
+bool ledState = false;
+const int LED_X = 16;      // LED position X (near right edge)
+const int LED_Y = 16;        // LED position Y (near top)
+const int LED_RADIUS = 5;   // LED circle radius
+
+// Function to turn LED on (green circle)
+void ledOn() {
+  tft.fillCircle(LED_X, LED_Y, LED_RADIUS, TFT_GREEN);
+  ledState = true;
+  ledOnTime = millis();
+}
+
+// Function to turn LED off (dark circle)
+void ledOff() {
+  tft.fillCircle(LED_X, LED_Y, LED_RADIUS, TFT_DARKGREY);
+  ledState = false;
+}
+
+// Function to update LED state (call in loop)
+void updateLED() {
+  if (ledState && (millis() - ledOnTime >= LED_DURATION)) {
+    ledOff();
+  }
+}
+
 // Function to get display name based on message type
 String getMidiName(MidiMessageType type, uint8_t number)
 {
@@ -86,32 +114,35 @@ String getMidiName(MidiMessageType type, uint8_t number)
 void updateDisplay()
 {
   // Clear previous values (draw black rectangles over old text)
-  tft.fillRect(20, 56, 140, 32, TFT_BLACK);   // IN area
-  tft.fillRect(190, 56, 120, 32, TFT_BLACK);  // OUT area
-  tft.fillRect(20, 105, 140, 32, TFT_BLACK);  // IN value area
-  tft.fillRect(190, 105, 100, 32, TFT_BLACK); // OUT value area
+  tft.fillRect(20, 56, 130, 35, TFT_BLACK);   // IN command area
+  tft.fillRect(165, 56, 145, 35, TFT_BLACK);  // OUT command area
+  tft.fillRect(20, 105, 130, 35, TFT_BLACK);  // IN value area
+  tft.fillRect(165, 105, 145, 35, TFT_BLACK); // OUT value area
 
   // Display IN MIDI command
   tft.setTextSize(4);
-  tft.setTextColor(TFT_CYAN);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);  // Set text color with black background
   tft.setCursor(20, 56);
-  tft.println(getMidiName(currentMidi.type, currentMidi.inNumber));
+  tft.print(getMidiName(currentMidi.type, currentMidi.inNumber));
 
   // Display OUT MIDI command
-  tft.setCursor(190, 56);
-  tft.println(getMidiName(currentMidi.type, currentMidi.outNumber));
+  tft.setCursor(180, 56);
+  tft.print(getMidiName(currentMidi.type, currentMidi.outNumber));
 
   // Display values (only for CC and Notes, not for PC)
-  tft.setTextColor(TFT_YELLOW);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);  // Set text color with black background
   if (currentMidi.type != MSG_PC)
   {
     tft.setCursor(20, 105);
-    tft.println(currentMidi.inValue);
-    tft.setCursor(190, 105);
-    tft.println(currentMidi.outValue);
+    tft.print(currentMidi.inValue);
+    tft.setCursor(180, 105);
+    tft.print(currentMidi.outValue);
   }
 
   tft.drawFastVLine(159, 2, 168, TFT_DARKGREY);
+  
+  // Trigger LED blink on every update
+  ledOn();
 }
 
 void setup()
@@ -144,12 +175,12 @@ void setup()
   // Add some colorful text
   tft.setTextSize(2);
   tft.setTextColor(TFT_DARKGREEN);
-  tft.setCursor(20, 10);
+  tft.setCursor(70, 10);
   tft.println("IN");
 
   tft.setTextSize(2);
   tft.setTextColor(TFT_DARKGREEN);
-  tft.setCursor(190, 10);
+  tft.setCursor(220, 10);
   tft.println("OUT");
 
   // tft.drawTriangle(150, 8, 150, 28, 160, 18, TFT_DARKGREY); // on top
@@ -158,6 +189,9 @@ void setup()
 
   // Draw border with rounded corners
   tft.drawRoundRect(0, 0, 320, 172, 23, TFT_MAGENTA);
+  
+  // Initialize LED indicator in off state
+  ledOff();
 
   // Initial display update
   updateDisplay();
@@ -167,6 +201,9 @@ void setup()
 
 void loop()
 {
+  // Update LED state (turn off after duration)
+  updateLED();
+  
   // Demo: Cycle through different MIDI message types every 3 seconds
   static unsigned long lastUpdate = 0;
   static uint8_t demoMode = 0;
