@@ -1,6 +1,8 @@
 MIDI Mapper is a MIDI processor that allows you to transform and remap MIDI signals in a flexible and intuitive way.
 
-![image](doc/midimap1.jpg)
+<p align="center">
+  <img src="doc/midimap1.jpg" alt="MIDI Mapper" width="400">
+</p>
 
 Features:
 * Intuitive WEB user interface
